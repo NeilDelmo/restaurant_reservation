@@ -94,16 +94,19 @@ public class MainDashboard extends javax.swing.JFrame {
     });
 }
 
-    private void initializeTable() {
-        // Define table columns
-        tableModel = new DefaultTableModel();
-        tableModel.addColumn("Customer Name");
-        tableModel.addColumn("Time");
-        tableModel.addColumn("Party Size");
-        tableModel.addColumn("Status");
-
-        jTable1.setModel(tableModel);
-    }
+  private void initializeTable() {
+    tableModel = new DefaultTableModel(
+        new Object[][]{},
+        new String[]{"ID", "Customer", "Time", "Party Size", "Status"}
+    ) {
+        @Override
+        public boolean isCellEditable(int row, int column) {
+            return false; // Make table read-only
+        }
+    };
+    jTable1.setModel(tableModel);
+    jTable1.removeColumn(jTable1.getColumnModel().getColumn(0)); // Hide ID column
+}
 
     private void setupCalendarListener() {
         // Add date change listener to JCalendar
@@ -129,15 +132,16 @@ public class MainDashboard extends javax.swing.JFrame {
             pstmt.setDate(1, new java.sql.Date(date.getTime()));
             ResultSet rs = pstmt.executeQuery();
 
-            while (rs.next()) {
-                Object[] row = {
-                    rs.getString("customer_name"),
-                    rs.getString("start_time") + " - " + rs.getString("end_time"),
-                    rs.getInt("party_size"),
-                    rs.getString("status_name")
-                };
-                tableModel.addRow(row);
-            }
+          while (rs.next()) {
+    Object[] row = {
+        rs.getInt("reservation_id"), // Add this
+        rs.getString("customer_name"),
+        rs.getString("start_time") + " - " + rs.getString("end_time"),
+        rs.getInt("party_size"),
+        rs.getString("status_name")
+    };
+    tableModel.addRow(row);
+}
         } catch (SQLException e) {
             e.printStackTrace();
             JOptionPane.showMessageDialog(this, "Error loading reservations");
@@ -160,7 +164,7 @@ public class MainDashboard extends javax.swing.JFrame {
         jScrollPane1 = new javax.swing.JScrollPane();
         jTable1 = new javax.swing.JTable();
         addresrvationbutton = new javax.swing.JButton();
-        cancelreservationbutton = new javax.swing.JButton();
+        modreservationbutton = new javax.swing.JButton();
         jPanel2 = new javax.swing.JPanel();
         jLabel2 = new javax.swing.JLabel();
 
@@ -184,8 +188,18 @@ public class MainDashboard extends javax.swing.JFrame {
         jScrollPane1.setViewportView(jTable1);
 
         addresrvationbutton.setText("Add Reservation");
+        addresrvationbutton.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                addresrvationbuttonActionPerformed(evt);
+            }
+        });
 
-        cancelreservationbutton.setText("Cancel Reservation");
+        modreservationbutton.setText("Modify Reservation");
+        modreservationbutton.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                modreservationbuttonActionPerformed(evt);
+            }
+        });
 
         javax.swing.GroupLayout ReservationPanelLayout = new javax.swing.GroupLayout(ReservationPanel);
         ReservationPanel.setLayout(ReservationPanelLayout);
@@ -203,7 +217,7 @@ public class MainDashboard extends javax.swing.JFrame {
                         .addGap(27, 27, 27)
                         .addGroup(ReservationPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
                             .addComponent(addresrvationbutton, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                            .addComponent(cancelreservationbutton, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))))
+                            .addComponent(modreservationbutton, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))))
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addComponent(jScrollPane1, javax.swing.GroupLayout.PREFERRED_SIZE, 658, javax.swing.GroupLayout.PREFERRED_SIZE)
                 .addContainerGap(14, Short.MAX_VALUE))
@@ -211,20 +225,18 @@ public class MainDashboard extends javax.swing.JFrame {
         ReservationPanelLayout.setVerticalGroup(
             ReservationPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(ReservationPanelLayout.createSequentialGroup()
-                .addGroup(ReservationPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                .addGap(14, 14, 14)
+                .addGroup(ReservationPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)
+                    .addComponent(jScrollPane1, javax.swing.GroupLayout.PREFERRED_SIZE, 242, javax.swing.GroupLayout.PREFERRED_SIZE)
                     .addGroup(ReservationPanelLayout.createSequentialGroup()
-                        .addGap(29, 29, 29)
                         .addComponent(jLabel1)
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                         .addComponent(jCalendar1, javax.swing.GroupLayout.PREFERRED_SIZE, 125, javax.swing.GroupLayout.PREFERRED_SIZE)
                         .addGap(28, 28, 28)
                         .addComponent(addresrvationbutton)
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addComponent(cancelreservationbutton))
-                    .addGroup(ReservationPanelLayout.createSequentialGroup()
-                        .addGap(14, 14, 14)
-                        .addComponent(jScrollPane1, javax.swing.GroupLayout.PREFERRED_SIZE, 332, javax.swing.GroupLayout.PREFERRED_SIZE)))
-                .addContainerGap(12, Short.MAX_VALUE))
+                        .addComponent(modreservationbutton)))
+                .addContainerGap(40, Short.MAX_VALUE))
         );
 
         jPanel2.setBorder(javax.swing.BorderFactory.createMatteBorder(2, 2, 2, 2, new java.awt.Color(0, 0, 0)));
@@ -249,7 +261,7 @@ public class MainDashboard extends javax.swing.JFrame {
                 .addComponent(jPanel2, javax.swing.GroupLayout.PREFERRED_SIZE, 76, javax.swing.GroupLayout.PREFERRED_SIZE)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addComponent(ReservationPanel, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addContainerGap(247, Short.MAX_VALUE))
+                .addContainerGap(309, Short.MAX_VALUE))
         );
 
         javax.swing.GroupLayout layout = new javax.swing.GroupLayout(getContentPane());
@@ -269,6 +281,26 @@ public class MainDashboard extends javax.swing.JFrame {
 
         pack();
     }// </editor-fold>//GEN-END:initComponents
+
+    private void addresrvationbuttonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_addresrvationbuttonActionPerformed
+        // TODO add your handling code here:
+         new Reservationdialog().setVisible(true);
+    loadReservations(jCalendar1.getDate());
+    }//GEN-LAST:event_addresrvationbuttonActionPerformed
+
+    private void modreservationbuttonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_modreservationbuttonActionPerformed
+        // TODO add your handling code here:
+         int selectedRow = jTable1.getSelectedRow();
+    if (selectedRow == -1) {
+        JOptionPane.showMessageDialog(this, "Please select a reservation");
+        return;
+    }
+    
+    int reservationId = (int) tableModel.getValueAt(selectedRow, 0);
+    Reservationdialog dialog = new Reservationdialog(reservationId);
+    dialog.setVisible(true);
+    loadReservations(jCalendar1.getDate());
+    }//GEN-LAST:event_modreservationbuttonActionPerformed
 
     /**
      * @param args the command line arguments
@@ -308,7 +340,6 @@ public class MainDashboard extends javax.swing.JFrame {
     // Variables declaration - do not modify//GEN-BEGIN:variables
     private javax.swing.JPanel ReservationPanel;
     private javax.swing.JButton addresrvationbutton;
-    private javax.swing.JButton cancelreservationbutton;
     private com.toedter.calendar.JCalendar jCalendar1;
     private javax.swing.JLabel jLabel1;
     private javax.swing.JLabel jLabel2;
@@ -316,5 +347,6 @@ public class MainDashboard extends javax.swing.JFrame {
     private javax.swing.JPanel jPanel2;
     private javax.swing.JScrollPane jScrollPane1;
     private javax.swing.JTable jTable1;
+    private javax.swing.JButton modreservationbutton;
     // End of variables declaration//GEN-END:variables
 }

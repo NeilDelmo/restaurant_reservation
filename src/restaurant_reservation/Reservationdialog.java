@@ -26,10 +26,16 @@ import java.util.Date; // Add this at the top of your file
 public class Reservationdialog extends javax.swing.JFrame {
     private static final String STATUS_CONFIRMED = "Confirmed";
     private int currentRestaurantId = 1;
+     private Integer reservationId;
 
     /**
      * Creates new form Reservationdialog
      */
+      public Reservationdialog(int reservationId) {
+        this(); // Call default constructor
+        this.reservationId = reservationId;
+        loadReservationData();
+    }
     public Reservationdialog() {
         try {
         UIManager.setLookAndFeel(UIManager.getCrossPlatformLookAndFeelClassName());
@@ -77,6 +83,7 @@ public class Reservationdialog extends javax.swing.JFrame {
     datePicker.setMinSelectableDate(new java.util.Date());
         setupComponents();
     }
+    
  private void setupComponents() {
     // Configure time spinners with proper models
     SpinnerDateModel startModel = new SpinnerDateModel(
@@ -527,29 +534,19 @@ private Time getEndTime() {
 
     private void btnSubmitActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_btnSubmitActionPerformed
         // TODO add your handling code here:
-        try {
-        // Validate inputs
-        if (jTextField1.getText().isEmpty() || jTextField2.getText().isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Please enter customer name");
-            return;
+        if (reservationId != null) {
+            updateReservation();
+        } else {
+            createNewReservation();
         }
+    }//GEN-LAST:event_btnSubmitActionPerformed
+
+    private void createNewReservation() {
+    try (Connection conn = DatabaseConnection.getConnection()) {
+        conn.setAutoCommit(false); // Start transaction
         
-        if (((Date) spStartTime.getValue()).after((Date) spEndTime.getValue())) {
-            JOptionPane.showMessageDialog(this, "End time must be after start time");
-            return;
-        }
-        
-        int partySize = (Integer) spPartySize.getValue();
-        if (partySize < 1) {
-            JOptionPane.showMessageDialog(this, "Invalid party size");
-            return;
-        }
-        
-        if (lstAvailableTables.getSelectedValuesList().isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Please select at least one table");
-            return;
-        }
-         Calendar selectedDate = Calendar.getInstance();
+        // 1. Validate date
+        Calendar selectedDate = Calendar.getInstance();
         selectedDate.setTime(datePicker.getDate());
         selectedDate.set(Calendar.HOUR_OF_DAY, 0);
         selectedDate.set(Calendar.MINUTE, 0);
@@ -559,41 +556,134 @@ private Time getEndTime() {
         currentDate.set(Calendar.HOUR_OF_DAY, 0);
         currentDate.set(Calendar.MINUTE, 0);
         currentDate.set(Calendar.SECOND, 0);
-
+        
         if (selectedDate.before(currentDate)) {
             JOptionPane.showMessageDialog(this, "Cannot book past dates");
             return;
         }
 
-        // Database operations
-        try (Connection conn = DatabaseConnection.getConnection()) {
-            conn.setAutoCommit(false);  // Start transaction
-            
-            // Create/get customer
-            int customerId = getOrCreateCustomer(conn);
-            if (customerId == -1) {
-                JOptionPane.showMessageDialog(this, "Failed to create customer");
-                return;
-            }
-            
-            // Create reservation
-            int reservationId = createReservation(conn, customerId);
-            
-            // Assign tables
-            assignTables(conn, reservationId);
-            
-            conn.commit();  // Commit transaction
-            JOptionPane.showMessageDialog(this, "Reservation created successfully!");
-            this.dispose();
-            
-        } catch (SQLException ex) {
-            JOptionPane.showMessageDialog(this, "Database Error: " + ex.getMessage());
+        // 2. Create/Get customer
+        int customerId = getOrCreateCustomer(conn);
+        if (customerId == -1) {
+            JOptionPane.showMessageDialog(this, "Failed to create customer");
+            return;
         }
+
+        // 3. Create reservation
+        int reservationId = createReservation(conn, customerId);
+
+        // 4. Assign tables
+        assignTables(conn, reservationId);
+
+        // 5. Commit transaction
+        conn.commit();
+        JOptionPane.showMessageDialog(this, "Reservation created successfully!");
+        this.dispose();
+
+    } catch (SQLException ex) {
+        JOptionPane.showMessageDialog(this, "Database Error: " + ex.getMessage());
     } catch (Exception ex) {
         JOptionPane.showMessageDialog(this, "Error: " + ex.getMessage());
     }
-    }//GEN-LAST:event_btnSubmitActionPerformed
+}
+    private void updateReservation() {
+    try (Connection conn = DatabaseConnection.getConnection()) {
+        conn.setAutoCommit(false); // Start transaction
+        
+        // 1. Validate date
+        Calendar selectedDate = Calendar.getInstance();
+        selectedDate.setTime(datePicker.getDate());
+        selectedDate.set(Calendar.HOUR_OF_DAY, 0);
+        selectedDate.set(Calendar.MINUTE, 0);
+        selectedDate.set(Calendar.SECOND, 0);
 
+        Calendar currentDate = Calendar.getInstance();
+        currentDate.set(Calendar.HOUR_OF_DAY, 0);
+        currentDate.set(Calendar.MINUTE, 0);
+        currentDate.set(Calendar.SECOND, 0);
+        
+        if (selectedDate.before(currentDate)) {
+            JOptionPane.showMessageDialog(this, "Cannot update to past dates");
+            return;
+        }
+
+        // 2. Update customer
+        updateCustomer(conn);
+
+        // 3. Update reservation
+        String sql = "UPDATE Reservation SET "
+                + "reservation_date = ?, "
+                + "start_time = ?, "
+                + "end_time = ?, "
+                + "party_size = ?, "
+                + "status_id = ?, "
+                + "special_requests = ? "
+                + "WHERE reservation_id = ?";
+                
+        try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setDate(1, new java.sql.Date(datePicker.getDate().getTime()));
+            pstmt.setTime(2, getStartTime());
+            pstmt.setTime(3, getEndTime());
+            pstmt.setInt(4, (Integer) spPartySize.getValue());
+            pstmt.setInt(5, getStatusId(cbStatus.getSelectedItem().toString()));
+            pstmt.setString(6, txtSpecialRequests.getText());
+            pstmt.setInt(7, reservationId);
+            pstmt.executeUpdate();
+        }
+
+        // 4. Update tables
+        updateTables(conn);
+
+        // 5. Commit transaction
+        conn.commit();
+        JOptionPane.showMessageDialog(this, "Reservation updated successfully!");
+        this.dispose();
+
+    } catch (SQLException ex) {
+        JOptionPane.showMessageDialog(this, "Update failed: " + ex.getMessage());
+    } catch (Exception ex) {
+        JOptionPane.showMessageDialog(this, "Error: " + ex.getMessage());
+    }
+}
+    private void updateCustomer(Connection conn) throws SQLException {
+    String sql = "UPDATE Customer SET "
+            + "first_name = ?, "
+            + "last_name = ?, "
+            + "email = ?, "
+            + "phone = ?, "
+            + "preferences = ? "
+            + "WHERE customer_id = ?";
+    
+    try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+        pstmt.setString(1, jTextField1.getText());
+        pstmt.setString(2, jTextField2.getText());
+        pstmt.setString(3, jTextField3.getText());
+        pstmt.setString(4, jTextField4.getText());
+        pstmt.setString(5, jTextArea1.getText());
+        pstmt.setInt(6, getExistingCustomerId(conn));
+        pstmt.executeUpdate();
+    }
+}
+    private void updateTables(Connection conn) throws SQLException {
+    // Remove old tables
+    String deleteSql = "DELETE FROM Reservation_Table WHERE reservation_id = ?";
+    try (PreparedStatement pstmt = conn.prepareStatement(deleteSql)) {
+        pstmt.setInt(1, reservationId);
+        pstmt.executeUpdate();
+    }
+    
+    // Assign new tables
+    assignTables(conn, reservationId);
+}
+
+private int getExistingCustomerId(Connection conn) throws SQLException {
+    String sql = "SELECT customer_id FROM Reservation WHERE reservation_id = ?";
+    try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+        pstmt.setInt(1, reservationId);
+        ResultSet rs = pstmt.executeQuery();
+        return rs.next() ? rs.getInt("customer_id") : -1;
+    }
+}
     private int getStatusId(String statusName) throws SQLException {
     try (Connection conn = DatabaseConnection.getConnection()) {
         String sql = "SELECT status_id FROM Reservation_Status WHERE status_name = ?";
@@ -643,6 +733,36 @@ private void assignTables(Connection conn, int reservationId) throws SQLExceptio
         pstmt.executeBatch();
     }
 }
+ private void loadReservationData() {
+        try (Connection conn = DatabaseConnection.getConnection()) {
+            String sql = "SELECT * FROM Reservation WHERE reservation_id = ?";
+            PreparedStatement pstmt = conn.prepareStatement(sql);
+            pstmt.setInt(1, reservationId);
+            ResultSet rs = pstmt.executeQuery();
+            
+            if (rs.next()) {
+                // Populate customer info
+                jTextField1.setText(rs.getString("first_name"));
+                jTextField2.setText(rs.getString("last_name"));
+                jTextField3.setText(rs.getString("email"));
+                jTextField4.setText(rs.getString("phone"));
+                jTextArea1.setText(rs.getString("preferences"));
+                
+                // Set date and time
+                datePicker.setDate(rs.getDate("reservation_date"));
+                spStartTime.setValue(rs.getTime("start_time"));
+                spEndTime.setValue(rs.getTime("end_time"));
+                
+                // Set other fields
+                spPartySize.setValue(rs.getInt("party_size"));
+                cbStatus.setSelectedItem(rs.getString("status_name"));
+                txtSpecialRequests.setText(rs.getString("special_requests"));
+            }
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Error loading reservation: " + ex.getMessage());
+        }
+    }
+ 
     /**
      * @param args the command line arguments
      */
