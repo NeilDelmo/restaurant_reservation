@@ -4,17 +4,144 @@
  */
 package restaurant_reservation;
 
+import java.awt.Color;
+import java.awt.Dimension;
+import java.awt.Font;
+import javax.swing.table.DefaultTableModel;
+import java.sql.*;
+import javax.swing.JOptionPane;
+import java.util.Date;
+import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
+
 /**
  *
  * @author Neil
  */
 public class MainDashboard extends javax.swing.JFrame {
 
+    private DefaultTableModel tableModel;
+
     /**
      * Creates new form MainDashboard
      */
     public MainDashboard() {
-        initComponents();
+    // 1. FIRST: Force a compatible Look & Feel before initializing components
+    try {
+        UIManager.setLookAndFeel(UIManager.getCrossPlatformLookAndFeelClassName());
+    } catch (Exception ex) {
+        ex.printStackTrace();
+    }
+
+    initComponents(); // NetBeans-generated code
+    setLocationRelativeTo(null);
+
+    // 2. DIRECTLY MODIFY JCalendar's INTERNAL COMPONENTS
+    com.toedter.calendar.JDayChooser dayChooser = jCalendar1.getDayChooser();
+    
+    // Fix day numbers visibility
+    dayChooser.setForeground(Color.BLACK);
+    dayChooser.setBackground(Color.WHITE);
+    dayChooser.setSundayForeground(Color.RED);
+    
+    // Force component transparency settings
+    dayChooser.setOpaque(true);
+    jCalendar1.setOpaque(true);
+    
+    // 3. SET FONT HIERARCHY EXPLICITLY
+    Font boldFont = new Font("SansSerif", Font.BOLD, 12);
+    dayChooser.setFont(boldFont);
+    dayChooser.getDayPanel().setFont(boldFont);
+    
+    // 4. SET PREFERRED SIZES (Workaround for layout issues)
+    jCalendar1.setPreferredSize(new Dimension(300, 200));
+    dayChooser.setPreferredSize(new Dimension(280, 150));
+    
+    // 5. NUCLEAR OPTION: Replace the calendar completely
+    // Uncomment these lines if nothing else works
+    // javax.swing.JPanel calendarPanel = (javax.swing.JPanel) jCalendar1.getParent();
+    // calendarPanel.removeAll();
+    // calendarPanel.add(new com.toedter.calendar.JCalendar());
+    // calendarPanel.revalidate();
+
+    // 6. FINAL FORCED REFRESH
+    SwingUtilities.invokeLater(() -> {
+        jCalendar1.updateUI();
+        jCalendar1.revalidate();
+        jCalendar1.repaint();
+    });
+    
+    
+    
+    
+    
+    
+    
+    initializeTable();
+    setupCalendarListener();
+    loadReservations(new Date());
+    
+    // Fix for JCalendar display issues
+
+    // Rest of your existing initialization code
+    jTable1.setModel(new DefaultTableModel(
+            new Object[][]{},
+            new String[]{"Customer", "Time", "Party Size", "Status"}
+    ));
+
+    jCalendar1.addPropertyChangeListener("calendar", (evt) -> {
+        JOptionPane.showMessageDialog(this, "Date changed!");
+    });
+}
+
+    private void initializeTable() {
+        // Define table columns
+        tableModel = new DefaultTableModel();
+        tableModel.addColumn("Customer Name");
+        tableModel.addColumn("Time");
+        tableModel.addColumn("Party Size");
+        tableModel.addColumn("Status");
+
+        jTable1.setModel(tableModel);
+    }
+
+    private void setupCalendarListener() {
+        // Add date change listener to JCalendar
+        jCalendar1.addPropertyChangeListener("calendar", evt -> {
+            Date selectedDate = jCalendar1.getDate();
+            loadReservations(selectedDate);
+        });
+    }
+
+    private void loadReservations(Date date) {
+        tableModel.setRowCount(0); // Clear existing data
+
+        try (Connection conn = DatabaseConnection.getConnection()) {
+            String sql = "SELECT r.*, CONCAT(c.first_name, ' ', c.last_name) AS customer_name, "
+                    + "s.status_name "
+                    + "FROM Reservation r "
+                    + "JOIN Customer c ON r.customer_id = c.customer_id "
+                    + "JOIN Reservation_Status s ON r.status_id = s.status_id "
+                    + "WHERE r.reservation_date = ? "
+                    + "ORDER BY r.start_time";
+
+            PreparedStatement pstmt = conn.prepareStatement(sql);
+            pstmt.setDate(1, new java.sql.Date(date.getTime()));
+            ResultSet rs = pstmt.executeQuery();
+
+            while (rs.next()) {
+                Object[] row = {
+                    rs.getString("customer_name"),
+                    rs.getString("start_time") + " - " + rs.getString("end_time"),
+                    rs.getInt("party_size"),
+                    rs.getString("status_name")
+                };
+                tableModel.addRow(row);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(this, "Error loading reservations");
+        }
     }
 
     /**
@@ -32,7 +159,10 @@ public class MainDashboard extends javax.swing.JFrame {
         jLabel1 = new javax.swing.JLabel();
         jScrollPane1 = new javax.swing.JScrollPane();
         jTable1 = new javax.swing.JTable();
+        addresrvationbutton = new javax.swing.JButton();
+        cancelreservationbutton = new javax.swing.JButton();
         jPanel2 = new javax.swing.JPanel();
+        jLabel2 = new javax.swing.JLabel();
 
         setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
 
@@ -53,6 +183,10 @@ public class MainDashboard extends javax.swing.JFrame {
         ));
         jScrollPane1.setViewportView(jTable1);
 
+        addresrvationbutton.setText("Add Reservation");
+
+        cancelreservationbutton.setText("Cancel Reservation");
+
         javax.swing.GroupLayout ReservationPanelLayout = new javax.swing.GroupLayout(ReservationPanel);
         ReservationPanel.setLayout(ReservationPanelLayout);
         ReservationPanelLayout.setHorizontalGroup(
@@ -64,7 +198,12 @@ public class MainDashboard extends javax.swing.JFrame {
                         .addComponent(jLabel1, javax.swing.GroupLayout.PREFERRED_SIZE, 106, javax.swing.GroupLayout.PREFERRED_SIZE))
                     .addGroup(ReservationPanelLayout.createSequentialGroup()
                         .addContainerGap()
-                        .addComponent(jCalendar1, javax.swing.GroupLayout.PREFERRED_SIZE, 178, javax.swing.GroupLayout.PREFERRED_SIZE)))
+                        .addComponent(jCalendar1, javax.swing.GroupLayout.PREFERRED_SIZE, 178, javax.swing.GroupLayout.PREFERRED_SIZE))
+                    .addGroup(ReservationPanelLayout.createSequentialGroup()
+                        .addGap(27, 27, 27)
+                        .addGroup(ReservationPanelLayout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
+                            .addComponent(addresrvationbutton, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                            .addComponent(cancelreservationbutton, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))))
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addComponent(jScrollPane1, javax.swing.GroupLayout.PREFERRED_SIZE, 658, javax.swing.GroupLayout.PREFERRED_SIZE)
                 .addContainerGap(14, Short.MAX_VALUE))
@@ -77,14 +216,22 @@ public class MainDashboard extends javax.swing.JFrame {
                         .addGap(29, 29, 29)
                         .addComponent(jLabel1)
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addComponent(jCalendar1, javax.swing.GroupLayout.PREFERRED_SIZE, 125, javax.swing.GroupLayout.PREFERRED_SIZE))
+                        .addComponent(jCalendar1, javax.swing.GroupLayout.PREFERRED_SIZE, 125, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addGap(28, 28, 28)
+                        .addComponent(addresrvationbutton)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(cancelreservationbutton))
                     .addGroup(ReservationPanelLayout.createSequentialGroup()
                         .addGap(14, 14, 14)
                         .addComponent(jScrollPane1, javax.swing.GroupLayout.PREFERRED_SIZE, 332, javax.swing.GroupLayout.PREFERRED_SIZE)))
                 .addContainerGap(12, Short.MAX_VALUE))
         );
 
-        jPanel2.setBorder(new javax.swing.border.MatteBorder(null));
+        jPanel2.setBorder(javax.swing.BorderFactory.createMatteBorder(2, 2, 2, 2, new java.awt.Color(0, 0, 0)));
+
+        jLabel2.setFont(new java.awt.Font("Segoe UI Black", 1, 24)); // NOI18N
+        jLabel2.setText("Restaurant Reservation");
+        jPanel2.add(jLabel2);
 
         javax.swing.GroupLayout jPanel1Layout = new javax.swing.GroupLayout(jPanel1);
         jPanel1.setLayout(jPanel1Layout);
@@ -94,7 +241,7 @@ public class MainDashboard extends javax.swing.JFrame {
             .addGroup(jPanel1Layout.createSequentialGroup()
                 .addContainerGap()
                 .addComponent(ReservationPanel, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addContainerGap(790, Short.MAX_VALUE))
+                .addContainerGap(210, Short.MAX_VALUE))
         );
         jPanel1Layout.setVerticalGroup(
             jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
@@ -109,7 +256,9 @@ public class MainDashboard extends javax.swing.JFrame {
         getContentPane().setLayout(layout);
         layout.setHorizontalGroup(
             layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addComponent(jPanel1, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+            .addGroup(layout.createSequentialGroup()
+                .addComponent(jPanel1, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addGap(0, 0, Short.MAX_VALUE))
         );
         layout.setVerticalGroup(
             layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
@@ -158,8 +307,11 @@ public class MainDashboard extends javax.swing.JFrame {
 
     // Variables declaration - do not modify//GEN-BEGIN:variables
     private javax.swing.JPanel ReservationPanel;
+    private javax.swing.JButton addresrvationbutton;
+    private javax.swing.JButton cancelreservationbutton;
     private com.toedter.calendar.JCalendar jCalendar1;
     private javax.swing.JLabel jLabel1;
+    private javax.swing.JLabel jLabel2;
     private javax.swing.JPanel jPanel1;
     private javax.swing.JPanel jPanel2;
     private javax.swing.JScrollPane jScrollPane1;

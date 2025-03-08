@@ -13,7 +13,7 @@ import javax.swing.JOptionPane;
  * @author Neil
  */
 public class DatabaseConnection {
-    private final static String URL = "jdbc:mysql://localhost:3307/?";
+    private final static String URL = "jdbc:mysql://localhost:3307/restaurant_reservation";
     private final static String USER = "root";
     private final static String PASS = "";
     
