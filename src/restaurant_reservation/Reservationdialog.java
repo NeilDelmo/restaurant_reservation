@@ -18,6 +18,8 @@ import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 import java.util.Date; // Add this at the top of your file
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 
 /**
  *
@@ -48,34 +50,19 @@ public class Reservationdialog extends javax.swing.JFrame {
         initComponents(); // NetBeans-generated code
         setLocationRelativeTo(null);
 
-        // 2. DIRECTLY MODIFY JCalendar's INTERNAL COMPONENTS
         com.toedter.calendar.JDayChooser dayChooser = datePicker.getDayChooser();
-
-        // Fix day numbers visibility
         dayChooser.setForeground(Color.BLACK);
         dayChooser.setBackground(Color.WHITE);
         dayChooser.setSundayForeground(Color.RED);
 
-        // Force component transparency settings
         dayChooser.setOpaque(true);
         datePicker.setOpaque(true);
-
-        // 3. SET FONT HIERARCHY EXPLICITLY
         Font boldFont = new Font("SansSerif", Font.BOLD, 12);
         dayChooser.setFont(boldFont);
         dayChooser.getDayPanel().setFont(boldFont);
 
-        // 4. SET PREFERRED SIZES (Workaround for layout issues)
         datePicker.setPreferredSize(new Dimension(300, 200));
         dayChooser.setPreferredSize(new Dimension(280, 150));
-
-        // 5. NUCLEAR OPTION: Replace the calendar completely
-        // Uncomment these lines if nothing else works
-        // javax.swing.JPanel calendarPanel = (javax.swing.JPanel) jCalendar1.getParent();
-        // calendarPanel.removeAll();
-        // calendarPanel.add(new com.toedter.calendar.JCalendar());
-        // calendarPanel.revalidate();
-        // 6. FINAL FORCED REFRESH
         SwingUtilities.invokeLater(() -> {
             datePicker.updateUI();
             datePicker.revalidate();
@@ -116,6 +103,64 @@ public class Reservationdialog extends javax.swing.JFrame {
 
         // Date picker listener
         datePicker.addPropertyChangeListener("calendar", evt -> loadAvailableTables());
+
+        txtTotalAmount.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) {
+                updateDeposit();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent e) {
+                updateDeposit();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent e) {
+                updateDeposit();
+            }
+
+            private void updateDeposit() {
+                try {
+                    double total = Double.parseDouble(txtTotalAmount.getText());
+                    double deposit = total * 0.3;
+                    lblDeposit.setText(String.format("$%.2f", deposit));
+                } catch (NumberFormatException ex) {
+                    lblDeposit.setText("Invalid amount");
+                }
+            }
+        });
+
+        // Load statuses from database
+        loadStatuses();
+
+        // Set default status for new reservations
+        if (reservationId == null) {
+            cbStatus.setSelectedItem("Pending Deposit");
+            cbStatus.setEnabled(false);
+        }
+    }
+
+    private void loadStatuses() {
+        DefaultComboBoxModel<String> model = new DefaultComboBoxModel<>();
+        try (Connection conn = DatabaseConnection.getConnection()) {
+            String sql = "SELECT status_name FROM Reservation_Status ORDER BY status_id";
+            PreparedStatement pstmt = conn.prepareStatement(sql);
+            ResultSet rs = pstmt.executeQuery();
+            while (rs.next()) {
+                model.addElement(rs.getString("status_name"));
+            }
+            cbStatus.setModel(model);
+        } catch (SQLException ex) {
+            ex.printStackTrace();
+            // Fallback if DB fails
+            model.addElement("Pending Deposit");
+            model.addElement("Deposit Paid");
+            model.addElement("Confirmed");
+            model.addElement("Cancelled");
+            model.addElement("Completed");
+            model.addElement("No-Show");
+        }
     }
 
     private int getOrCreateCustomer(Connection conn) throws SQLException {
@@ -186,6 +231,8 @@ public class Reservationdialog extends javax.swing.JFrame {
 
         // Date validation
         Date selectedDate = datePicker.getDate();
+        Date startTime = (Date) spStartTime.getValue();
+        Date endTime = (Date) spEndTime.getValue();
         if (selectedDate == null) {
             return;
         }
@@ -209,6 +256,10 @@ public class Reservationdialog extends javax.swing.JFrame {
             datePicker.setDate(new Date());
             return;
         }
+        if (endTime.before(startTime)) {
+            JOptionPane.showMessageDialog(this, "End time must be after start time");
+            return; // Exit early to avoid invalid queries
+        }
 
         // Database query remains the same
         try (Connection conn = DatabaseConnection.getConnection()) {
@@ -216,26 +267,31 @@ public class Reservationdialog extends javax.swing.JFrame {
                     + "FROM Table_Layout t "
                     + "WHERE t.restaurant_id = ? "
                     + "AND t.table_id NOT IN ("
-                    + "SELECT table_id FROM Table_Availability "
-                    + "WHERE unavailable_date = ? "
-                    + "AND ? BETWEEN start_time AND end_time"
+                    + "  SELECT table_id FROM Table_Availability "
+                    + "  WHERE unavailable_date = ? "
+                    + "  AND ? BETWEEN start_time AND end_time"
                     + ") "
                     + "AND t.table_id NOT IN ("
-                    + "SELECT rt.table_id FROM Reservation_Table rt "
-                    + "JOIN Reservation r ON rt.reservation_id = r.reservation_id "
-                    + "WHERE r.reservation_date = ? "
-                    + "AND NOT (r.end_time <= ? OR r.start_time >= ?)"
+                    + "  SELECT rt.table_id FROM Reservation_Table rt "
+                    + "  JOIN Reservation r ON rt.reservation_id = r.reservation_id "
+                    + "  WHERE r.reservation_date = ? "
+                    + "  AND NOT (r.end_time <= ? OR r.start_time >= ?)"
                     + ")";
+
             PreparedStatement pstmt = conn.prepareStatement(sql);
             pstmt.setInt(1, currentRestaurantId);
-            pstmt.setDate(2, new java.sql.Date(selectedDate.getTime()));
-            pstmt.setTime(3, getStartTime());
-            pstmt.setTime(4, getEndTime());
+            pstmt.setDate(2, new java.sql.Date(selectedDate.getTime()));  // Unavailable date
+            pstmt.setTime(3, getStartTime());                             // Availability time check
+            pstmt.setDate(4, new java.sql.Date(selectedDate.getTime()));   // Reservation date
+            pstmt.setTime(5, getStartTime());                             // Existing reservation end time
+            pstmt.setTime(6, getEndTime());                               // Existing reservation start time
 
             ResultSet rs = pstmt.executeQuery();
             while (rs.next()) {
-                model.addElement(rs.getString("table_number")
-                        + " (Capacity: " + rs.getInt("capacity") + ")");
+                model.addElement(
+                        rs.getInt("table_id") + " - "
+                        + rs.getString("table_number") + " (Capacity: " + rs.getInt("capacity") + ")"
+                );
             }
         } catch (SQLException ex) {
             JOptionPane.showMessageDialog(this, "Error loading tables: " + ex.getMessage());
@@ -293,6 +349,11 @@ public class Reservationdialog extends javax.swing.JFrame {
         jLabel12 = new javax.swing.JLabel();
         cbStatus = new javax.swing.JComboBox<>();
         btnSubmit = new javax.swing.JButton();
+        jPanel5 = new javax.swing.JPanel();
+        jLabel13 = new javax.swing.JLabel();
+        txtTotalAmount = new javax.swing.JTextField();
+        jLabel14 = new javax.swing.JLabel();
+        lblDeposit = new javax.swing.JLabel();
 
         setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
 
@@ -424,14 +485,14 @@ public class Reservationdialog extends javax.swing.JFrame {
                     .addComponent(jLabel8, javax.swing.GroupLayout.Alignment.LEADING, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                     .addComponent(jLabel10, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
                 .addGap(40, 40, 40)
-                .addGroup(jPanel4Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                    .addComponent(jScrollPane2, javax.swing.GroupLayout.PREFERRED_SIZE, 65, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addGroup(jPanel4Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
                     .addGroup(jPanel4Layout.createSequentialGroup()
                         .addComponent(spStartTime, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                         .addComponent(spEndTime, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
                     .addComponent(spPartySize, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                    .addComponent(jScrollPane3, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                    .addComponent(jScrollPane3)
+                    .addComponent(jScrollPane2, javax.swing.GroupLayout.PREFERRED_SIZE, 0, Short.MAX_VALUE))
                 .addGap(78, 78, 78))
             .addGroup(jPanel4Layout.createSequentialGroup()
                 .addGroup(jPanel4Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
@@ -442,14 +503,13 @@ public class Reservationdialog extends javax.swing.JFrame {
                         .addComponent(datePicker, javax.swing.GroupLayout.PREFERRED_SIZE, 189, javax.swing.GroupLayout.PREFERRED_SIZE))
                     .addGroup(jPanel4Layout.createSequentialGroup()
                         .addContainerGap()
-                        .addComponent(jLabel12, javax.swing.GroupLayout.PREFERRED_SIZE, 43, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addGap(89, 89, 89)
-                        .addComponent(cbStatus, javax.swing.GroupLayout.PREFERRED_SIZE, 137, javax.swing.GroupLayout.PREFERRED_SIZE)))
+                        .addGroup(jPanel4Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)
+                            .addComponent(btnSubmit)
+                            .addGroup(jPanel4Layout.createSequentialGroup()
+                                .addComponent(jLabel12, javax.swing.GroupLayout.PREFERRED_SIZE, 43, javax.swing.GroupLayout.PREFERRED_SIZE)
+                                .addGap(89, 89, 89)
+                                .addComponent(cbStatus, javax.swing.GroupLayout.PREFERRED_SIZE, 137, javax.swing.GroupLayout.PREFERRED_SIZE)))))
                 .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
-            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel4Layout.createSequentialGroup()
-                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                .addComponent(btnSubmit)
-                .addGap(174, 174, 174))
         );
         jPanel4Layout.setVerticalGroup(
             jPanel4Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
@@ -485,9 +545,51 @@ public class Reservationdialog extends javax.swing.JFrame {
                     .addGroup(jPanel4Layout.createSequentialGroup()
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
                         .addComponent(cbStatus, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)))
-                .addGap(48, 48, 48)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                 .addComponent(btnSubmit)
-                .addContainerGap(110, Short.MAX_VALUE))
+                .addGap(19, 19, 19))
+        );
+
+        jPanel5.setBorder(javax.swing.BorderFactory.createMatteBorder(2, 2, 2, 2, new java.awt.Color(0, 0, 0)));
+
+        jLabel13.setFont(new java.awt.Font("Segoe UI Black", 1, 24)); // NOI18N
+        jLabel13.setText("Required Deposit:");
+
+        txtTotalAmount.setFont(new java.awt.Font("Segoe UI Black", 1, 18)); // NOI18N
+
+        jLabel14.setFont(new java.awt.Font("Segoe UI Black", 1, 24)); // NOI18N
+        jLabel14.setText("TOTAL AMOUNT:");
+
+        lblDeposit.setFont(new java.awt.Font("Segoe UI Black", 1, 24)); // NOI18N
+        lblDeposit.setText("0");
+
+        javax.swing.GroupLayout jPanel5Layout = new javax.swing.GroupLayout(jPanel5);
+        jPanel5.setLayout(jPanel5Layout);
+        jPanel5Layout.setHorizontalGroup(
+            jPanel5Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+            .addGroup(jPanel5Layout.createSequentialGroup()
+                .addGap(75, 75, 75)
+                .addGroup(jPanel5Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
+                    .addComponent(jLabel13, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                    .addComponent(txtTotalAmount)
+                    .addComponent(jLabel14, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                    .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel5Layout.createSequentialGroup()
+                        .addComponent(lblDeposit, javax.swing.GroupLayout.PREFERRED_SIZE, 124, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addGap(11, 11, 11)))
+                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+        );
+        jPanel5Layout.setVerticalGroup(
+            jPanel5Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+            .addGroup(jPanel5Layout.createSequentialGroup()
+                .addGap(91, 91, 91)
+                .addComponent(jLabel14)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addComponent(txtTotalAmount, javax.swing.GroupLayout.PREFERRED_SIZE, 38, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addGap(36, 36, 36)
+                .addComponent(jLabel13)
+                .addGap(18, 18, 18)
+                .addComponent(lblDeposit)
+                .addContainerGap(101, Short.MAX_VALUE))
         );
 
         javax.swing.GroupLayout jPanel2Layout = new javax.swing.GroupLayout(jPanel2);
@@ -496,7 +598,9 @@ public class Reservationdialog extends javax.swing.JFrame {
             jPanel2Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(jPanel2Layout.createSequentialGroup()
                 .addContainerGap()
-                .addComponent(jPanel3, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addGroup(jPanel2Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
+                    .addComponent(jPanel3, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                    .addComponent(jPanel5, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addComponent(jPanel4, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                 .addContainerGap())
@@ -509,7 +613,8 @@ public class Reservationdialog extends javax.swing.JFrame {
                     .addComponent(jPanel4, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                     .addGroup(jPanel2Layout.createSequentialGroup()
                         .addComponent(jPanel3, javax.swing.GroupLayout.PREFERRED_SIZE, 285, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addGap(0, 0, Short.MAX_VALUE)))
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(jPanel5, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)))
                 .addContainerGap())
         );
 
@@ -523,14 +628,16 @@ public class Reservationdialog extends javax.swing.JFrame {
             jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(jPanel1Layout.createSequentialGroup()
                 .addComponent(jPanel2, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addGap(0, 6, Short.MAX_VALUE))
+                .addGap(0, 0, Short.MAX_VALUE))
         );
 
         javax.swing.GroupLayout layout = new javax.swing.GroupLayout(getContentPane());
         getContentPane().setLayout(layout);
         layout.setHorizontalGroup(
             layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addComponent(jPanel1, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+            .addGroup(layout.createSequentialGroup()
+                .addComponent(jPanel1, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addContainerGap(103, Short.MAX_VALUE))
         );
         layout.setVerticalGroup(
             layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
@@ -569,6 +676,18 @@ public class Reservationdialog extends javax.swing.JFrame {
                 JOptionPane.showMessageDialog(this, "Cannot book past dates");
                 return;
             }
+            String totalStr = txtTotalAmount.getText().trim();
+            if (totalStr.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Total amount is required");
+                return;
+            }
+            double totalAmount;
+            try {
+                totalAmount = Double.parseDouble(totalStr);
+            } catch (NumberFormatException e) {
+                JOptionPane.showMessageDialog(this, "Invalid total amount");
+                return;
+            }
 
             // 2. Create/Get customer
             int customerId = getOrCreateCustomer(conn);
@@ -578,7 +697,8 @@ public class Reservationdialog extends javax.swing.JFrame {
             }
 
             // 3. Create reservation
-            int reservationId = createReservation(conn, customerId);
+            int reservationId = createReservation(conn, customerId, totalAmount);
+            createPayment(conn, reservationId, totalAmount);
 
             // 4. Assign tables
             assignTables(conn, reservationId);
@@ -592,6 +712,16 @@ public class Reservationdialog extends javax.swing.JFrame {
             JOptionPane.showMessageDialog(this, "Database Error: " + ex.getMessage());
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Error: " + ex.getMessage());
+        }
+    }
+
+    private void createPayment(Connection conn, int reservationId, double totalAmount) throws SQLException {
+        String sql = "INSERT INTO Payment (reservation_id, amount, payment_type, status) "
+                + "VALUES (?, ?, 'deposit', 'pending')";
+        try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, reservationId);
+            pstmt.setDouble(2, totalAmount * 0.3);
+            pstmt.executeUpdate();
         }
     }
 
@@ -706,28 +836,29 @@ public class Reservationdialog extends javax.swing.JFrame {
         }
     }
 
-    private int createReservation(Connection conn, int customerId) throws SQLException {
+    private int createReservation(Connection conn, int customerId, double totalAmount) throws SQLException {
         String sql = "INSERT INTO Reservation (customer_id, restaurant_id, reservation_date, "
-                + "start_time, end_time, party_size, status_id, special_requests) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+                + "start_time, end_time, party_size, status_id, special_requests, total_amount) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         try (PreparedStatement pstmt = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
             pstmt.setInt(1, customerId);
             pstmt.setInt(2, currentRestaurantId);
             pstmt.setDate(3, new java.sql.Date(datePicker.getDate().getTime()));
-            pstmt.setTime(4, new Time(((Date) spStartTime.getValue()).getTime()));
-            pstmt.setTime(5, new Time(((Date) spEndTime.getValue()).getTime()));
+            pstmt.setTime(4, getStartTime());
+            pstmt.setTime(5, getEndTime());
             pstmt.setInt(6, (Integer) spPartySize.getValue());
-            pstmt.setInt(7, getStatusId((String) cbStatus.getSelectedItem()));
+            pstmt.setInt(7, getStatusId("Pending Deposit")); // Force status for new reservations
             pstmt.setString(8, txtSpecialRequests.getText());
-
+            pstmt.setDouble(9, totalAmount);
             pstmt.executeUpdate();
 
+            // Retrieve generated reservation ID
             try (ResultSet rs = pstmt.getGeneratedKeys()) {
                 if (rs.next()) {
                     return rs.getInt(1);
                 }
-                throw new SQLException("Failed to create reservation");
+                throw new SQLException("Reservation creation failed");
             }
         }
     }
@@ -737,7 +868,7 @@ public class Reservationdialog extends javax.swing.JFrame {
 
         try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
             for (String tableInfo : lstAvailableTables.getSelectedValuesList()) {
-                int tableId = Integer.parseInt(tableInfo.split(" ")[0]);
+                int tableId = Integer.parseInt(tableInfo.split(" - ")[0]);
                 pstmt.setInt(1, reservationId);
                 pstmt.setInt(2, tableId);
                 pstmt.addBatch();
@@ -748,7 +879,11 @@ public class Reservationdialog extends javax.swing.JFrame {
 
     private void loadReservationData() {
         try (Connection conn = DatabaseConnection.getConnection()) {
-            String sql = "SELECT * FROM Reservation WHERE reservation_id = ?";
+            String sql = "SELECT r.*, rs.status_name, p.amount AS deposit "
+                    + "FROM Reservation r "
+                    + "JOIN Reservation_Status rs ON r.status_id = rs.status_id "
+                    + "LEFT JOIN Payment p ON r.reservation_id = p.reservation_id AND p.payment_type = 'deposit' "
+                    + "WHERE r.reservation_id = ?";
             PreparedStatement pstmt = conn.prepareStatement(sql);
             pstmt.setInt(1, reservationId);
             ResultSet rs = pstmt.executeQuery();
@@ -770,6 +905,9 @@ public class Reservationdialog extends javax.swing.JFrame {
                 spPartySize.setValue(rs.getInt("party_size"));
                 cbStatus.setSelectedItem(rs.getString("status_name"));
                 txtSpecialRequests.setText(rs.getString("special_requests"));
+                txtTotalAmount.setText(String.valueOf(rs.getDouble("total_amount")));
+                lblDeposit.setText(String.format("$%.2f", rs.getDouble("deposit")));
+                cbStatus.setSelectedItem(rs.getString("status_name"));
             }
         } catch (SQLException ex) {
             JOptionPane.showMessageDialog(this, "Error loading reservation: " + ex.getMessage());
@@ -819,6 +957,8 @@ public class Reservationdialog extends javax.swing.JFrame {
     private javax.swing.JLabel jLabel10;
     private javax.swing.JLabel jLabel11;
     private javax.swing.JLabel jLabel12;
+    private javax.swing.JLabel jLabel13;
+    private javax.swing.JLabel jLabel14;
     private javax.swing.JLabel jLabel2;
     private javax.swing.JLabel jLabel3;
     private javax.swing.JLabel jLabel4;
@@ -831,6 +971,7 @@ public class Reservationdialog extends javax.swing.JFrame {
     private javax.swing.JPanel jPanel2;
     private javax.swing.JPanel jPanel3;
     private javax.swing.JPanel jPanel4;
+    private javax.swing.JPanel jPanel5;
     private javax.swing.JScrollPane jScrollPane1;
     private javax.swing.JScrollPane jScrollPane2;
     private javax.swing.JScrollPane jScrollPane3;
@@ -839,10 +980,12 @@ public class Reservationdialog extends javax.swing.JFrame {
     private javax.swing.JTextField jTextField2;
     private javax.swing.JTextField jTextField3;
     private javax.swing.JTextField jTextField4;
+    private javax.swing.JLabel lblDeposit;
     private javax.swing.JList<String> lstAvailableTables;
     private javax.swing.JSpinner spEndTime;
     private javax.swing.JSpinner spPartySize;
     private javax.swing.JSpinner spStartTime;
     private javax.swing.JTextArea txtSpecialRequests;
+    private javax.swing.JTextField txtTotalAmount;
     // End of variables declaration//GEN-END:variables
 }
