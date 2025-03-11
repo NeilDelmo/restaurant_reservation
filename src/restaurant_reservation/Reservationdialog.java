@@ -355,7 +355,7 @@ public class Reservationdialog extends javax.swing.JFrame {
         jLabel14 = new javax.swing.JLabel();
         lblDeposit = new javax.swing.JLabel();
 
-        setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
+        setDefaultCloseOperation(javax.swing.WindowConstants.DISPOSE_ON_CLOSE);
 
         jPanel2.setBorder(javax.swing.BorderFactory.createMatteBorder(3, 3, 3, 3, new java.awt.Color(0, 0, 0)));
 
@@ -635,9 +635,7 @@ public class Reservationdialog extends javax.swing.JFrame {
         getContentPane().setLayout(layout);
         layout.setHorizontalGroup(
             layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGroup(layout.createSequentialGroup()
-                .addComponent(jPanel1, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                .addContainerGap(103, Short.MAX_VALUE))
+            .addComponent(jPanel1, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
         );
         layout.setVerticalGroup(
             layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
@@ -786,22 +784,30 @@ public class Reservationdialog extends javax.swing.JFrame {
     }
 
     private void updateCustomer(Connection conn) throws SQLException {
-        String sql = "UPDATE Customer SET "
-                + "first_name = ?, "
-                + "last_name = ?, "
-                + "email = ?, "
-                + "phone = ?, "
-                + "preferences = ? "
-                + "WHERE customer_id = ?";
+        String email = jTextField3.getText().trim();
+        String checkSql = "SELECT customer_id FROM Customer WHERE email = ?";
 
-        try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            pstmt.setString(1, jTextField1.getText());
-            pstmt.setString(2, jTextField2.getText());
-            pstmt.setString(3, jTextField3.getText());
-            pstmt.setString(4, jTextField4.getText());
-            pstmt.setString(5, jTextArea1.getText());
-            pstmt.setInt(6, getExistingCustomerId(conn));
-            pstmt.executeUpdate();
+        try (PreparedStatement checkStmt = conn.prepareStatement(checkSql)) {
+            checkStmt.setString(1, email);
+            ResultSet rs = checkStmt.executeQuery();
+
+            if (rs.next()) {
+                // Update existing customer
+                String updateSql = "UPDATE Customer SET "
+                        + "first_name = ?, last_name = ?, phone = ?, preferences = ? "
+                        + "WHERE email = ?";
+                try (PreparedStatement updateStmt = conn.prepareStatement(updateSql)) {
+                    updateStmt.setString(1, jTextField1.getText());
+                    updateStmt.setString(2, jTextField2.getText());
+                    updateStmt.setString(3, jTextField4.getText());
+                    updateStmt.setString(4, jTextArea1.getText());
+                    updateStmt.setString(5, email);
+                    updateStmt.executeUpdate();
+                }
+            } else {
+                // Create new customer if email doesn't exist
+                getOrCreateCustomer(conn);
+            }
         }
     }
 
@@ -879,35 +885,37 @@ public class Reservationdialog extends javax.swing.JFrame {
 
     private void loadReservationData() {
         try (Connection conn = DatabaseConnection.getConnection()) {
-            String sql = "SELECT r.*, rs.status_name, p.amount AS deposit "
+            // Add Customer JOIN and select customer fields
+            String sql = "SELECT r.*, c.first_name, c.last_name, c.email, c.phone, c.preferences, "
+                    + "rs.status_name, p.amount AS deposit "
                     + "FROM Reservation r "
-                    + "JOIN Reservation_Status rs ON r.status_id = rs.status_id "
-                    + "LEFT JOIN Payment p ON r.reservation_id = p.reservation_id AND p.payment_type = 'deposit' "
+                    + "JOIN Customer c ON r.customer_id = c.customer_id "
+                    + // Add this line
+                    "JOIN Reservation_Status rs ON r.status_id = rs.status_id "
+                    + "LEFT JOIN Payment p ON r.reservation_id = p.reservation_id "
+                    + "AND p.payment_type = 'deposit' "
                     + "WHERE r.reservation_id = ?";
             PreparedStatement pstmt = conn.prepareStatement(sql);
             pstmt.setInt(1, reservationId);
             ResultSet rs = pstmt.executeQuery();
 
             if (rs.next()) {
-                // Populate customer info
+                // Populate customer fields from joined data
                 jTextField1.setText(rs.getString("first_name"));
                 jTextField2.setText(rs.getString("last_name"));
                 jTextField3.setText(rs.getString("email"));
                 jTextField4.setText(rs.getString("phone"));
                 jTextArea1.setText(rs.getString("preferences"));
 
-                // Set date and time
+                // Existing date/time fields
                 datePicker.setDate(rs.getDate("reservation_date"));
                 spStartTime.setValue(rs.getTime("start_time"));
                 spEndTime.setValue(rs.getTime("end_time"));
-
-                // Set other fields
                 spPartySize.setValue(rs.getInt("party_size"));
                 cbStatus.setSelectedItem(rs.getString("status_name"));
                 txtSpecialRequests.setText(rs.getString("special_requests"));
                 txtTotalAmount.setText(String.valueOf(rs.getDouble("total_amount")));
                 lblDeposit.setText(String.format("$%.2f", rs.getDouble("deposit")));
-                cbStatus.setSelectedItem(rs.getString("status_name"));
             }
         } catch (SQLException ex) {
             JOptionPane.showMessageDialog(this, "Error loading reservation: " + ex.getMessage());
